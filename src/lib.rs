@@ -1,6 +1,8 @@
 use {
     base64::prelude::{Engine as _, BASE64_STANDARD},
     itertools::Itertools,
+    log::{debug, info},
+    reqwest::Client,
     serde::{Deserialize, Serialize},
     solana_pubkey::{ParsePubkeyError, Pubkey},
     solana_sdk::{instruction::Instruction, transaction::VersionedTransaction},
@@ -261,8 +263,16 @@ pub async fn quote(
             .unwrap_or_default(),
         base_url=quote_api_url(),
     );
+    debug!("{url}");
+    let value = if let Ok(api_key) = env::var("JUP_API_KEY") {
+        Client::builder().build()?.get(url).header("x-api-key", api_key).send().await?.json().await?
+    } else {
+        info!("JUP_API_KEY is not set. Trying without x-api-key header. It might fail.");
+        reqwest::get(url).await?.json().await?
+    };
+    debug!("result is {:#?}", value);
 
-    maybe_jupiter_api_error(reqwest::get(url).await?.json().await?)
+    maybe_jupiter_api_error(value)
 }
 
 #[derive(Debug)]
@@ -322,10 +332,15 @@ struct SwapResponse {
 pub async fn swap(swap_request: SwapRequest) -> Result<Swap> {
     let url = format!("{}/swap", quote_api_url());
 
+    let builder = if let Ok(api_key) = env::var("JUP_API_KEY") {
+        Client::builder().build()?.get(url).header("x-api-key", api_key)
+    } else {
+        info!("JUP_API_KEY is not set. Trying without x-api-key header. It might fail.");
+        Client::builder().build()?.get(url)
+    };
+
     let response = maybe_jupiter_api_error::<SwapResponse>(
-        reqwest::Client::builder()
-            .build()?
-            .post(url)
+        builder
             .header("Accept", "application/json")
             .json(&swap_request)
             .send()
